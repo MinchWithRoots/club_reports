@@ -4,10 +4,23 @@ import { useState, useEffect } from "react";
 import { utils, writeFile } from "xlsx";
 import type { Report, ClubSummary, FormData, Direction } from "@/types/database";
 import { DIRECTIONS, RATES, PERIODS } from "@/types/database";
+import ComboBox from "@/components/ComboBox";
 
-const CLUBS = ["Клуб А", "Клуб Б", "Клуб В"];
+interface ClubItem {
+  id: number | string;
+  name: string;
+}
 
-const SECTIONS: Record<Direction, { name: string; supervisor: string }[]> = {
+interface SectionItem {
+  id: number | string;
+  direction: string;
+  name: string;
+  supervisor_name: string;
+}
+
+const CLUBS: ClubItem[] = [];
+
+const SECTIONS_STATIC: Record<Direction, { name: string; supervisor: string }[]> = {
   'КДН': [
     { name: "Шахматы", supervisor: "Иванов Иван Иванович" },
     { name: "Рисование", supervisor: "Петрова Анна Сергеевна" },
@@ -142,10 +155,49 @@ export default function Home() {
     }
   };
 
-    const downloadExcel = () => {
+    const downloadExcelServer = async () => {
+    setMessage("");
+    if (data.length === 0) {
+      setMessage("⚠️ Нет данных за выбранный период!");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const res = await fetch(`/api/export?period=${selectedPeriod}`);
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || "Ошибка при генерации файла");
+      }
+
+      const blob = await res.blob();
+      if (blob.size === 0) {
+        throw new Error("Полученный файл пуст");
+      }
+
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Report_${selectedPeriod}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      setMessage("✅ Excel скачан!");
+    } catch (err) {
+      console.error("Export error:", err);
+      setMessage("❌ " + (err instanceof Error ? err.message : "Ошибка экспорта"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const downloadExcel = () => {
     try {
       if (data.length === 0) {
-        alert("⚠️ Нет данных за выбранный период!");
+        setMessage("⚠️ Нет данных за выбранный период!");
         return;
       }
 
@@ -285,10 +337,10 @@ export default function Home() {
 
       const filename = `Report_${selectedPeriod}_${new Date().toISOString().split("T")[0]}.xlsx`;
       writeFile(wb, filename);
-      setMessage("✅ Excel скачан!");
+      setMessage("✅ Excel скачан (локально)!");
     } catch (err) {
       console.error("Excel error:", err);
-      setMessage("❌ Ошибка Excel: " + (err as Error).message);
+      setMessage("❌ Ошибка Excel: " + (err instanceof Error ? err.message : "Неизвестная ошибка"));
     }
   };
 
@@ -504,9 +556,14 @@ export default function Home() {
         <h2>📈 Итоги за {selectedPeriod}</h2>
         {summary.length > 0 ? (
           <>
-            <button onClick={downloadExcel} className="excel-btn">
-              📥 Скачать Excel за {selectedPeriod}
-            </button>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+              <button onClick={downloadExcelServer} disabled={loading} className="excel-btn">
+                📥 Скачать Excel (Сервер)
+              </button>
+              <button onClick={downloadExcel} className="excel-btn">
+                📥 Скачать Excel (Браузер)
+              </button>
+            </div>
             <table className="table">
               <thead>
                 <tr>
