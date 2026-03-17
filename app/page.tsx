@@ -4,10 +4,26 @@ import { useState, useEffect } from "react";
 import { utils, writeFile } from "xlsx";
 import type { Report, ClubSummary, FormData, Direction } from "@/types/database";
 import { DIRECTIONS, RATES, PERIODS } from "@/types/database";
+import ComboBox from "@/components/ComboBox";
+import ProtectedPage from "@/components/ProtectedPage";
+import { useAuth } from "@/lib/auth-context";
+import { useRouter } from "next/navigation";
 
-const CLUBS = ["Клуб А", "Клуб Б", "Клуб В"];
+interface ClubItem {
+  id: number | string;
+  name: string;
+}
 
-const SECTIONS: Record<Direction, { name: string; supervisor: string }[]> = {
+interface SectionItem {
+  id: number | string;
+  direction: string;
+  name: string;
+  supervisor_name: string;
+}
+
+const CLUBS: ClubItem[] = [];
+
+const SECTIONS_STATIC: Record<Direction, { name: string; supervisor: string }[]> = {
   'КДН': [
     { name: "Шахматы", supervisor: "Иванов Иван Иванович" },
     { name: "Рисование", supervisor: "Петрова Анна Сергеевна" },
@@ -34,6 +50,9 @@ const SECTIONS: Record<Direction, { name: string; supervisor: string }[]> = {
 };
 
 export default function Home() {
+  const { user, logout } = useAuth();
+  const router = useRouter();
+
   const [formData, setFormData] = useState<FormData>({
     club_name: "",
     direction: "",
@@ -54,7 +73,9 @@ export default function Home() {
   });
 
   const [selectedPeriod, setSelectedPeriod] = useState<string>(PERIODS[new Date().getMonth()]);
-  const [availableSections, setAvailableSections] = useState<{ name: string; supervisor: string }[]>([]);
+  const [clubs, setClubs] = useState<ClubItem[]>([]);
+  const [sections, setSections] = useState<SectionItem[]>([]);
+  const [availableSections, setAvailableSections] = useState<SectionItem[]>([]);
   const [data, setData] = useState<Report[]>([]);
   const [summary, setSummary] = useState<ClubSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -63,24 +84,51 @@ export default function Home() {
 
   useEffect(() => {
     setIsClient(true);
+    loadClubs();
+    loadSections();
   }, []);
+
+  const loadClubs = async () => {
+    try {
+      const res = await fetch("/api/clubs");
+      const json = await res.json();
+      if (json.success) {
+        setClubs(json.clubs);
+      }
+    } catch (err) {
+      console.error("Error loading clubs:", err);
+    }
+  };
+
+  const loadSections = async () => {
+    try {
+      const res = await fetch("/api/sections");
+      const json = await res.json();
+      if (json.success) {
+        setSections(json.sections);
+      }
+    } catch (err) {
+      console.error("Error loading sections:", err);
+    }
+  };
 
   useEffect(() => {
     loadData(selectedPeriod);
   }, [selectedPeriod]);
 
   useEffect(() => {
-    if (formData.direction && formData.direction in SECTIONS) {
-      setAvailableSections(SECTIONS[formData.direction as Direction]);
+    if (formData.direction) {
+      const filtered = sections.filter(s => s.direction === formData.direction);
+      setAvailableSections(filtered);
       setFormData(prev => ({ ...prev, section_name: "", supervisor_name: "" }));
     }
-  }, [formData.direction]);
+  }, [formData.direction, sections]);
 
   useEffect(() => {
     if (formData.section_name && availableSections.length > 0) {
       const section = availableSections.find(s => s.name === formData.section_name);
       if (section) {
-        setFormData(prev => ({ ...prev, supervisor_name: section.supervisor }));
+        setFormData(prev => ({ ...prev, supervisor_name: section.supervisor_name }));
       }
     }
   }, [formData.section_name, availableSections]);
@@ -98,6 +146,60 @@ export default function Home() {
     } catch (err) {
       console.error("Load error:", err);
       setMessage("❌ Ошибка загрузки");
+    }
+  };
+
+  const createClub = async (clubName: string): Promise<ClubItem | null> => {
+    try {
+      const res = await fetch("/api/clubs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: clubName }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        const club = json.club;
+        setClubs(prev => [...prev.filter(c => c.name !== club.name), club]);
+        setMessage(`✅ Клуб "${clubName}" добавлен!`);
+        return club;
+      } else {
+        setMessage("❌ " + json.error);
+        return null;
+      }
+    } catch (err) {
+      console.error("Club creation error:", err);
+      setMessage("❌ Ошибка при добавлении клуба");
+      return null;
+    }
+  };
+
+  const createSection = async (
+    direction: string,
+    sectionName: string,
+    supervisorName: string
+  ): Promise<SectionItem | null> => {
+    try {
+      const res = await fetch("/api/sections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ direction, name: sectionName, supervisor_name: supervisorName }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        const section = json.section;
+        setSections(prev => [...prev.filter(s => s.name !== section.name), section]);
+        const filtered = sections.filter(s => s.direction === direction);
+        setAvailableSections([...filtered.filter(s => s.name !== section.name), section]);
+        setMessage(`✅ Секция "${sectionName}" добавлена!`);
+        return section;
+      } else {
+        setMessage("❌ " + json.error);
+        return null;
+      }
+    } catch (err) {
+      console.error("Section creation error:", err);
+      setMessage("❌ Ошибка при добавлении секции");
+      return null;
     }
   };
 
@@ -142,10 +244,49 @@ export default function Home() {
     }
   };
 
-    const downloadExcel = () => {
+    const downloadExcelServer = async () => {
+    setMessage("");
+    if (data.length === 0) {
+      setMessage("⚠️ Нет данных за выбранный период!");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const res = await fetch(`/api/export?period=${selectedPeriod}`);
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || "Ошибка при генерации файла");
+      }
+
+      const blob = await res.blob();
+      if (blob.size === 0) {
+        throw new Error("Полученный файл пуст");
+      }
+
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Report_${selectedPeriod}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      setMessage("✅ Excel скачан!");
+    } catch (err) {
+      console.error("Export error:", err);
+      setMessage("❌ " + (err instanceof Error ? err.message : "Ошибка экспорта"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const downloadExcel = () => {
     try {
       if (data.length === 0) {
-        alert("⚠️ Нет данных за выбранный период!");
+        setMessage("⚠️ Нет данных за выбранный период!");
         return;
       }
 
@@ -285,16 +426,30 @@ export default function Home() {
 
       const filename = `Report_${selectedPeriod}_${new Date().toISOString().split("T")[0]}.xlsx`;
       writeFile(wb, filename);
-      setMessage("✅ Excel скачан!");
+      setMessage("✅ Excel скачан (локально)!");
     } catch (err) {
       console.error("Excel error:", err);
-      setMessage("❌ Ошибка Excel: " + (err as Error).message);
+      setMessage("❌ Ошибка Excel: " + (err instanceof Error ? err.message : "Неизвестная ошибка"));
     }
   };
 
+  const handleLogout = () => {
+    logout();
+    router.push("/login");
+  };
+
   return (
-    <div className="container">
-      <h1 className="title">📊 Отчётность детских кружков</h1>
+    <ProtectedPage>
+      <div className="container">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+          <h1 className="title">📊 Отчётность детских кружков</h1>
+          <div style={{ display: "flex", gap: "15px", alignItems: "center" }}>
+            <span style={{ fontSize: "14px" }}>👤 {user?.full_name}</span>
+            <button onClick={handleLogout} className="btn" style={{ padding: "8px 12px", fontSize: "14px" }}>
+              🚪 Выход
+            </button>
+          </div>
+        </div>
 
       {/* Выбор периода */}
       <div className="period-selector">
@@ -314,18 +469,18 @@ export default function Home() {
       <div className="card">
         <h2>Внести данные</h2>
         <form onSubmit={handleSubmit} className="form">
-          
-          <select
-            value={formData.club_name}
-            onChange={(e) => setFormData({ ...formData, club_name: e.target.value })}
-            className="input"
-            required
-          >
-            <option value="">Выберите клуб</option>
-            {CLUBS.map(club => (
-              <option key={club} value={club}>{club}</option>
-            ))}
-          </select>
+          {isClient && (
+            <ComboBox
+              items={clubs}
+              value={formData.club_name}
+              onChange={(value) => setFormData({ ...formData, club_name: value })}
+              onAddNew={createClub}
+              placeholder="Выберите или добавьте клуб"
+              className="input"
+              displayKey="name"
+              allowNew={true}
+            />
+          )}
 
           <select
             value={formData.direction}
@@ -339,27 +494,30 @@ export default function Home() {
             ))}
           </select>
 
-          <select
-            value={formData.section_name}
-            onChange={(e) => setFormData({ ...formData, section_name: e.target.value })}
-            className="input"
-            required
-            disabled={!formData.direction}
-          >
-            <option value="">Выберите секцию</option>
-            {availableSections.map(sec => (
-              <option key={sec.name} value={sec.name}>{sec.name}</option>
-            ))}
-          </select>
+          {isClient && (
+            <ComboBox
+              items={availableSections}
+              value={formData.section_name}
+              onChange={(value) => setFormData({ ...formData, section_name: value })}
+              onAddNew={(sectionName) =>
+                createSection(formData.direction as Direction, sectionName, "")
+              }
+              placeholder="Выберите или добавьте секцию"
+              className="input"
+              displayKey="name"
+              allowNew={true}
+              disabled={!formData.direction}
+            />
+          )}
 
           <input
             type="text"
             placeholder="ФИО руководителя"
             value={formData.supervisor_name}
+            onChange={(e) => setFormData({ ...formData, supervisor_name: e.target.value })}
             className="input"
             required
-            readOnly
-            style={{ backgroundColor: '#f5f5f5' }}
+            style={{ backgroundColor: formData.supervisor_name ? '#fff' : '#f5f5f5' }}
           />
 
           <select
@@ -504,9 +662,14 @@ export default function Home() {
         <h2>📈 Итоги за {selectedPeriod}</h2>
         {summary.length > 0 ? (
           <>
-            <button onClick={downloadExcel} className="excel-btn">
-              📥 Скачать Excel за {selectedPeriod}
-            </button>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+              <button onClick={downloadExcelServer} disabled={loading} className="excel-btn">
+                📥 Скачать Excel (Сервер)
+              </button>
+              <button onClick={downloadExcel} className="excel-btn">
+                📥 Скачать Excel (Браузер)
+              </button>
+            </div>
             <table className="table">
               <thead>
                 <tr>
@@ -554,5 +717,6 @@ export default function Home() {
         </ul>
       </div>
     </div>
+    </ProtectedPage>
   );
 }
