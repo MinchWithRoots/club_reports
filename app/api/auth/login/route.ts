@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Неизвестная ошибка";
-    console.error("Login error:", message);
+    console.error("Login error:", error);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

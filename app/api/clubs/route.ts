@@ -16,7 +16,7 @@ export async function GET() {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Неизвестная ошибка";
-    console.error("Clubs fetch error:", message);
+    console.error("Clubs fetch error:", error);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Неизвестная ошибка";
-    console.error("Club creation error:", message);
+    console.error("Club creation error:", error);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

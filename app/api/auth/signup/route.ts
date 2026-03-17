@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Неизвестная ошибка";
-    console.error("Signup error:", message);
+    console.error("Signup error:", error);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

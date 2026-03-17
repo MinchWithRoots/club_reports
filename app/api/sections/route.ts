@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Неизвестная ошибка";
-    console.error("Sections fetch error:", message);
+    console.error("Sections fetch error:", error);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Неизвестная ошибка";
-    console.error("Section creation error:", message);
+    console.error("Section creation error:", error);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
